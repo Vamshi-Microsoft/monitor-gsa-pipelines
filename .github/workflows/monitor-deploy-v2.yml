@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       main_branch_only:
-        description: 'Fetch only runs from main branch'
+        description: 'Monitor main branch only (disable to monitor all branches)'
         required: false
-        default: false
+        default: true
         type: boolean
       trigger_filter:
-        description: 'Filter by trigger type'
+        description: 'Trigger type to monitor (default: scheduled runs)'
         required: false
-        default: 'all'
+        default: 'schedule'
         type: choice
         options:
           - all
@@ -32,8 +32,8 @@ jobs:
     name: Monitor deploy-v2 across repos
     runs-on: ubuntu-latest
     env:
-      MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'false' }}
-      TRIGGER_FILTER: ${{ github.event.inputs.trigger_filter || 'all' }}
+      MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'true' }}
+      TRIGGER_FILTER: ${{ github.event.inputs.trigger_filter || 'schedule' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
