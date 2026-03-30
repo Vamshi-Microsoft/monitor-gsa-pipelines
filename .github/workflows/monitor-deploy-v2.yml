@@ -311,7 +311,7 @@ jobs:
                             </tr>
                           </table>
                         </td>
-                      </tr>
+                      </tr>`;
 
             // Sort by status: failed first, then cancelled, in-progress, success, others
             const statusOrder = (r) => {
