@@ -22,6 +22,15 @@ on:
           - workflow_dispatch
           - push
           - pull_request
+      lookback_days:
+        description: 'Lookback period for pipeline runs'
+        required: false
+        default: '1'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '5'
 
 permissions:
   contents: read
@@ -34,6 +43,7 @@ jobs:
     env:
       MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'false' }}
       TRIGGER_FILTER: ${{ github.event.inputs.trigger_filter || 'all' }}
+      LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '1' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -85,14 +95,15 @@ jobs:
               };
 
               try {
-                // Fetch runs from the past 24 hours
-                const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                // Fetch runs from the configured lookback period
+                const lookbackDays = parseInt(process.env.LOOKBACK_DAYS || '1', 10);
+                const cutoffTime = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
                 const listParams = {
                   owner,
                   repo,
                   workflow_id: 'deploy-v2.yml',
                   per_page: 100,
-                  created: `>=${oneDayAgo.toISOString()}`
+                  created: `>=${cutoffTime.toISOString()}`
                 };
                 if (branchFilter) listParams.branch = branchFilter;
                 if (triggerFilter && triggerFilter !== 'all') listParams.event = triggerFilter;
@@ -104,7 +115,7 @@ jobs:
 
                 if (filteredRuns.length === 0) {
                   entry.status = 'no_recent_runs';
-                  entry.error = 'No workflow runs found in the last 24 hours';
+                  entry.error = `No workflow runs found in the last ${lookbackDays} day(s)`;
                   results.push(entry);
                   continue;
                 }
@@ -210,7 +221,8 @@ jobs:
             // Configuration display
             const branchLabel = process.env.MAIN_BRANCH_ONLY === 'true' ? 'main' : 'All';
             const triggerLabel = (process.env.TRIGGER_FILTER || 'all').trim();
-            summary += `> 🔍 **Configuration :** \`🌿 Branch: ${branchLabel}\` · \`⚡ Trigger: ${triggerLabel}\`\n\n`;
+            const lookbackLabel = process.env.LOOKBACK_DAYS || '1';
+            summary += `> 🔍 **Configuration :** \`🌿 Branch: ${branchLabel}\` · \`⚡ Trigger: ${triggerLabel}\` · \`📅 Lookback: ${lookbackLabel} day(s)\`\n\n`;
 
             // Stats overview pills
             summary += `> ✅ \`${successful} Success\` · ❌ \`${failed} Failed\` · ⏳ \`${inProgress} In Progress\` · ⚠️ \`${cancelled} Cancelled\` · ⚫ \`${noRuns} No Runs\`\n\n`;
@@ -223,7 +235,7 @@ jobs:
             });
 
             // Daily Success Percentage table
-            summary += `## 📈 Daily Success Rate (Last 24 hours)\n\n`;
+            summary += `## 📈 Success Rate (Last ${lookbackLabel} day(s))\n\n`;
             summary += `| Repository | Runs (Success / Total) | Success % |\n`;
             summary += `|:-----------|:----------------------:|:---------:|\n`;
 
@@ -327,7 +339,7 @@ jobs:
                           <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#e0f2fe; color:#0369a1; margin-right:8px;">
                             🌿 Branch: ${process.env.MAIN_BRANCH_ONLY === 'true' ? 'main' : 'All'}
                           </span>
-                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#fef3c7; color:#92400e;">
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#fef3c7; color:#92400e; margin-right:8px;">
                             ⚡ Trigger: ${(process.env.TRIGGER_FILTER || 'all').trim()}
                           </span>
                         </td>
@@ -344,7 +356,7 @@ jobs:
             html += `
                       <tr>
                         <td style="padding:0 40px 24px;">
-                          <h2 style="font-size:18px; color:#0f172a; margin:0 0 16px; font-weight:600;">📈 Daily Success Rate (Last 24 hours)</h2>
+                          <h2 style="font-size:18px; color:#0f172a; margin:0 0 16px; font-weight:600;">📈 Success Rate (Last ${process.env.LOOKBACK_DAYS || '1'} day(s))</h2>
                           <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #e2e8f0;">
                             <tr style="background-color:#f8fafc;">
                               <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Repository</th>
