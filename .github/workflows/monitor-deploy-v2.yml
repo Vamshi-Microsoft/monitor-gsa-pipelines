@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   monitor:
-    name: Monitor deploy-v2 across repos
+    name: Monitor GSA pipeline
     runs-on: ubuntu-latest
     env:
       MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'true' }}
@@ -38,7 +38,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Collect deploy-v2 pipeline status
+      - name: Collect GSA pipeline status
         id: collect
         uses: actions/github-script@v7
         with:
