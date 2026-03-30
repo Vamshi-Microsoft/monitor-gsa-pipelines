@@ -1,4 +1,4 @@
-name: Monitor Deploy-v2 Pipelines
+name: Monitor Deploy-v2 Pipeline
 
 on:
   schedule:
@@ -7,12 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       main_branch_only:
-        description: 'Monitor main branch only (disable to monitor all branches)'
+        description: 'Monitor main branch only'
         required: false
         default: false
         type: boolean
       trigger_filter:
-        description: 'Trigger type to monitor (default: all triggers)'
+        description: 'Trigger type to monitor'
         required: false
         default: 'all'
         type: choice
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   monitor:
-    name: Monitor GSA pipeline
+    name: Monitor Deploy-v2 pipeline
     runs-on: ubuntu-latest
     env:
       MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'false' }}
@@ -38,7 +38,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Collect GSA pipeline status
+      - name: Collect Deploy-v2 pipeline status
         id: collect
         uses: actions/github-script@v7
         with:
@@ -198,7 +198,7 @@ jobs:
             let summary = '';
 
             // Header
-            summary += `# 📊 Deploy-v2 Pipeline Monitor\n\n`;
+            summary += `# 📊 Deploy-v2 Pipeline Status\n\n`;
             summary += `> **Report generated:** ${new Date().toUTCString()}  \n\n`;
 
             // Overall health
@@ -430,7 +430,7 @@ jobs:
                       <tr>
                         <td style="background:#f8fafc; padding:20px 40px; text-align:center; border-top:1px solid #e2e8f0;">
                           <p style="margin:0; font-size:13px; color:#94a3b8;">
-                            🤖 Automated Pipeline Monitor ·
+                            🤖 Automated Deploy-v2 Pipeline Status ·
                             <a href="${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}" style="color:#3b82f6; text-decoration:none;">View Workflow Run</a>
                           </p>
                         </td>
@@ -447,8 +447,8 @@ jobs:
 
             // Set subject line
             const subject = failed > 0
-              ? `🚨 GSA Pipeline Status: ${failed} pipeline(s) FAILED — ${new Date().toLocaleDateString()}`
-              : `✅ GSA Pipeline Status: All pipelines healthy — ${new Date().toLocaleDateString()}`;
+              ? `🚨 Deploy-v2 Pipeline Status: ${failed} pipeline(s) FAILED — ${new Date().toLocaleDateString()}`
+              : `✅ Deploy-v2 Pipeline Status: All pipelines healthy — ${new Date().toLocaleDateString()}`;
             core.setOutput('subject', subject);
 
       - name: Upload report artifact
