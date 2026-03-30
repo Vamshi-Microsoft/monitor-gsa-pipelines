@@ -199,7 +199,6 @@ jobs:
 
             // Header
             summary += `# 📊 Deploy-v2 Pipeline Status\n\n`;
-            summary += `> **Report generated:** ${new Date().toUTCString()}  \n\n`;
 
             // Overall health
             if (failed === 0 && cancelled === 0) {
@@ -213,15 +212,15 @@ jobs:
             const triggerLabel = (process.env.TRIGGER_FILTER || 'all').trim();
             summary += `> 🔍 **Configuration :** \`🌿 Branch: ${branchLabel}\` · \`⚡ Trigger: ${triggerLabel}\`\n\n`;
 
-            // Sort by status: failed first, then cancelled, in-progress, success, others
-            const statusOrder = (r) => {
-              if (r.conclusion === 'failure') return 0;
-              if (r.conclusion === 'cancelled') return 1;
-              if (r.status === 'in_progress' || r.status === 'queued') return 2;
-              if (r.conclusion === 'success') return 3;
-              return 4;
-            };
-            const grouped = [...results].sort((a, b) => statusOrder(a) - statusOrder(b));
+            // Stats overview pills
+            summary += `> ✅ \`${successful} Success\` · ❌ \`${failed} Failed\` · ⏳ \`${inProgress} In Progress\` · ⚠️ \`${cancelled} Cancelled\` · ⚫ \`${noRuns} No Runs\`\n\n`;
+
+            // Sort by daily success percentage: smallest first (null = no data, sorted first)
+            const grouped = [...results].sort((a, b) => {
+              const aVal = a.dailySuccessPercent === null ? -1 : a.dailySuccessPercent;
+              const bVal = b.dailySuccessPercent === null ? -1 : b.dailySuccessPercent;
+              return aVal - bVal;
+            });
 
             // Daily Success Percentage table
             summary += `## 📈 Daily Success Rate (Last 24 hours)\n\n`;
@@ -233,7 +232,7 @@ jobs:
               const pct = r.dailySuccessPercent !== null ? `${r.dailySuccessPercent}%` : '—';
               const pctIcon = r.dailySuccessPercent === null ? '⚫' : r.dailySuccessPercent === 100 ? '🟢' : r.dailySuccessPercent >= 50 ? '🟡' : '🔴';
               const runsInfo = `${r.dailySuccessful} / ${r.dailyTotal}`;
-              summary += `| ${repoLink} | ${runsInfo} | ${pctIcon} **${pct}** |\n`;
+              summary += `| ${repoLink} | ${runsInfo} | ${pctIcon} \`${pct}\` |\n`;
             }
 
             summary += '\n';
@@ -334,15 +333,12 @@ jobs:
                         </td>
                       </tr>`;
 
-            // Sort by status: failed first, then cancelled, in-progress, success, others
-            const statusOrder = (r) => {
-              if (r.conclusion === 'failure') return 0;
-              if (r.conclusion === 'cancelled') return 1;
-              if (r.status === 'in_progress' || r.status === 'queued') return 2;
-              if (r.conclusion === 'success') return 3;
-              return 4;
-            };
-            const grouped = [...results].sort((a, b) => statusOrder(a) - statusOrder(b));
+            // Sort by daily success percentage: smallest first (null = no data, sorted first)
+            const grouped = [...results].sort((a, b) => {
+              const aVal = a.dailySuccessPercent === null ? -1 : a.dailySuccessPercent;
+              const bVal = b.dailySuccessPercent === null ? -1 : b.dailySuccessPercent;
+              return aVal - bVal;
+            });
 
             // Daily Success Rate section
             html += `
