@@ -9,12 +9,12 @@ on:
       main_branch_only:
         description: 'Monitor main branch only (disable to monitor all branches)'
         required: false
-        default: true
+        default: false
         type: boolean
       trigger_filter:
-        description: 'Trigger type to monitor (default: scheduled runs)'
+        description: 'Trigger type to monitor (default: all triggers)'
         required: false
-        default: 'schedule'
+        default: 'all'
         type: choice
         options:
           - all
@@ -32,8 +32,8 @@ jobs:
     name: Monitor GSA pipeline
     runs-on: ubuntu-latest
     env:
-      MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'true' }}
-      TRIGGER_FILTER: ${{ github.event.inputs.trigger_filter || 'schedule' }}
+      MAIN_BRANCH_ONLY: ${{ github.event.inputs.main_branch_only || 'false' }}
+      TRIGGER_FILTER: ${{ github.event.inputs.trigger_filter || 'all' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,17 +77,22 @@ jobs:
                 startedAt: null,
                 failedJobs: [],
                 workflowFound: false,
-                error: null
+                error: null,
+                dailyTotal: 0,
+                dailyCompleted: 0,
+                dailySuccessful: 0,
+                dailySuccessPercent: null
               };
 
               try {
-                // Look up deploy-v2.yml directly by filename — exactly like visiting
-                // https://github.com/{owner}/{repo}/actions/workflows/deploy-v2.yml
+                // Fetch runs from the past 24 hours
+                const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
                 const listParams = {
                   owner,
                   repo,
                   workflow_id: 'deploy-v2.yml',
-                  per_page: 1
+                  per_page: 100,
+                  created: `>=${oneDayAgo.toISOString()}`
                 };
                 if (branchFilter) listParams.branch = branchFilter;
                 if (triggerFilter && triggerFilter !== 'all') listParams.event = triggerFilter;
@@ -96,12 +101,22 @@ jobs:
 
                 if (runs.workflow_runs.length === 0) {
                   entry.status = 'no_recent_runs';
-                  entry.error = 'No workflow runs found';
+                  entry.error = 'No workflow runs found in the last 24 hours';
                   results.push(entry);
                   continue;
                 }
 
                 entry.workflowFound = true;
+
+                // Compute daily success percentage from all completed runs
+                const completedRuns = runs.workflow_runs.filter(r => r.status === 'completed');
+                const successfulRuns = completedRuns.filter(r => r.conclusion === 'success');
+                entry.dailyTotal = runs.workflow_runs.length;
+                entry.dailyCompleted = completedRuns.length;
+                entry.dailySuccessful = successfulRuns.length;
+                entry.dailySuccessPercent = completedRuns.length > 0
+                  ? Math.round((successfulRuns.length / completedRuns.length) * 100)
+                  : null;
 
                 // The API returns the latest run first — this is the top entry in the UI
                 const latestRun = runs.workflow_runs[0];
@@ -177,37 +192,11 @@ jobs:
             const noRuns = results.filter(r => r.status === 'no_recent_runs' || !r.workflowFound).length;
             const totalRepos = results.length;
 
-            const statusIcon = (r) => {
-              if (r.conclusion === 'success') return '🟢';
-              if (r.conclusion === 'failure') return '🔴';
-              if (r.conclusion === 'cancelled') return '🟡';
-              if (r.status === 'in_progress') return '🔵';
-              if (r.status === 'queued') return '⚪';
-              return '⚫';
-            };
-
-            const conclusionBadge = (r) => {
-              if (r.conclusion === 'success') return '`✅ Success`';
-              if (r.conclusion === 'failure') return '`❌ Failed`';
-              if (r.conclusion === 'cancelled') return '`⚠️ Cancelled`';
-              if (r.status === 'in_progress') return '`🔄 In Progress`';
-              if (r.status === 'queued') return '`⏳ Queued`';
-              if (!r.workflowFound) return '`➖ Not Found`';
-              if (r.status === 'no_recent_runs') return '`💤 No Runs`';
-              return '`❓ Unknown`';
-            };
-
             let summary = '';
 
             // Header
             summary += `# 📊 Deploy-v2 Pipeline Monitor\n\n`;
             summary += `> **Report generated:** ${new Date().toUTCString()}  \n\n`;
-
-            // Stats cards
-            summary += `## Summary\n\n`;
-            summary += `| Total | ✅ Success | ❌ Failed | 🔄 In Progress | ⚠️ Cancelled | 💤 No Runs |\n`;
-            summary += `|:-----:|:----------:|:---------:|:---------------:|:-------------:|:-----------:|\n`;
-            summary += `| **${totalRepos}** | **${successful}** | **${failed}** | **${inProgress}** | **${cancelled}** | **${noRuns}** |\n\n`;
 
             // Overall health
             if (failed === 0 && cancelled === 0) {
@@ -216,7 +205,7 @@ jobs:
               summary += `> **🚨 ${failed} pipeline(s) require attention!**\n\n`;
             }
 
-            // Detailed table — grouped by status
+            // Sort by status: failed first, then cancelled, in-progress, success, others
             const statusOrder = (r) => {
               if (r.conclusion === 'failure') return 0;
               if (r.conclusion === 'cancelled') return 1;
@@ -226,17 +215,17 @@ jobs:
             };
             const grouped = [...results].sort((a, b) => statusOrder(a) - statusOrder(b));
 
-            summary += `## Pipeline Details\n\n`;
-            summary += `| Status | Repository | Conclusion | Branch | Trigger | Triggered At | Run |\n`;
-            summary += `|:------:|:-----------|:-----------|:-------|:--------|:-------------|:----|\n`;
+            // Daily Success Percentage table
+            summary += `## 📈 Daily Success Rate (Last 24 hours)\n\n`;
+            summary += `| Repository | Runs (Success / Total) | Success % |\n`;
+            summary += `|:-----------|:----------------------:|:---------:|\n`;
 
             for (const r of grouped) {
               const repoLink = `[${r.repo}](${r.repoUrl}/actions/workflows/deploy-v2.yml)`;
-              const runLink = r.runUrl ? `[View](${r.runUrl})` : '—';
-              const branch = r.branch || '—';
-              const trigger = r.event || '—';
-              const triggeredAt = r.startedAt ? new Date(r.startedAt).toUTCString() : '—';
-              summary += `| ${statusIcon(r)} | ${repoLink} | ${conclusionBadge(r)} | \`${branch}\` | \`${trigger}\` | ${triggeredAt} | ${runLink} |\n`;
+              const pct = r.dailySuccessPercent !== null ? `${r.dailySuccessPercent}%` : '—';
+              const pctIcon = r.dailySuccessPercent === null ? '⚫' : r.dailySuccessPercent === 100 ? '🟢' : r.dailySuccessPercent >= 50 ? '🟡' : '🔴';
+              const runsInfo = `${r.dailySuccessful} / ${r.dailyTotal}`;
+              summary += `| ${repoLink} | ${runsInfo} | ${pctIcon} **${pct}** |\n`;
             }
 
             summary += '\n';
@@ -294,27 +283,7 @@ jobs:
             const noRuns = results.filter(r => r.status === 'no_recent_runs' || !r.workflowFound).length;
             const totalRepos = results.length;
 
-            const statusColor = (r) => {
-              if (r.conclusion === 'success') return '#22c55e';
-              if (r.conclusion === 'failure') return '#ef4444';
-              if (r.conclusion === 'cancelled') return '#f59e0b';
-              if (r.status === 'in_progress') return '#3b82f6';
-              return '#6b7280';
-            };
-
-            const statusLabel = (r) => {
-              if (r.conclusion === 'success') return '✅ Success';
-              if (r.conclusion === 'failure') return '❌ Failed';
-              if (r.conclusion === 'cancelled') return '⚠️ Cancelled';
-              if (r.status === 'in_progress') return '🔄 In Progress';
-              if (r.status === 'queued') return '⏳ Queued';
-              if (!r.workflowFound) return '➖ Not Found';
-              if (r.status === 'no_recent_runs') return '💤 No Runs';
-              return '❓ Unknown';
-            };
-
             const overallStatus = failed > 0 ? 'ACTION REQUIRED' : 'ALL HEALTHY';
-            const headerBg = failed > 0 ? '#dc2626' : '#16a34a';
 
             let html = `
             <!DOCTYPE html>
@@ -344,60 +313,7 @@ jobs:
                         </td>
                       </tr>
 
-                      <!-- Summary Stats -->
-                      <tr>
-                        <td style="padding:24px 40px;">
-                          <table width="100%" cellpadding="0" cellspacing="0">
-                            <tr>
-                              <td width="20%" align="center" style="padding:12px 4px;">
-                                <div style="background:#f8fafc; border-radius:8px; padding:16px 8px; border:1px solid #e2e8f0;">
-                                  <div style="font-size:28px; font-weight:700; color:#0f172a;">${totalRepos}</div>
-                                  <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Total</div>
-                                </div>
-                              </td>
-                              <td width="20%" align="center" style="padding:12px 4px;">
-                                <div style="background:#f0fdf4; border-radius:8px; padding:16px 8px; border:1px solid #bbf7d0;">
-                                  <div style="font-size:28px; font-weight:700; color:#16a34a;">${successful}</div>
-                                  <div style="font-size:11px; color:#16a34a; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Passed</div>
-                                </div>
-                              </td>
-                              <td width="20%" align="center" style="padding:12px 4px;">
-                                <div style="background:#fef2f2; border-radius:8px; padding:16px 8px; border:1px solid #fecaca;">
-                                  <div style="font-size:28px; font-weight:700; color:#dc2626;">${failed}</div>
-                                  <div style="font-size:11px; color:#dc2626; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Failed</div>
-                                </div>
-                              </td>
-                              <td width="20%" align="center" style="padding:12px 4px;">
-                                <div style="background:#fffbeb; border-radius:8px; padding:16px 8px; border:1px solid #fde68a;">
-                                  <div style="font-size:28px; font-weight:700; color:#d97706;">${cancelled}</div>
-                                  <div style="font-size:11px; color:#d97706; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Cancelled</div>
-                                </div>
-                              </td>
-                              <td width="20%" align="center" style="padding:12px 4px;">
-                                <div style="background:#f8fafc; border-radius:8px; padding:16px 8px; border:1px solid #e2e8f0;">
-                                  <div style="font-size:28px; font-weight:700; color:#6b7280;">${noRuns}</div>
-                                  <div style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">No Runs</div>
-                                </div>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-
-                      <!-- Pipeline Details -->
-                      <tr>
-                        <td style="padding:0 40px 24px;">
-                          <h2 style="font-size:18px; color:#0f172a; margin:0 0 16px; font-weight:600;">Pipeline Status</h2>
-                          <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #e2e8f0;">
-                            <tr style="background-color:#f8fafc;">
-                              <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Status</th>
-                              <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Repository</th>
-                              <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Branch</th>
-                              <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Triggered At</th>
-                              <th style="padding:12px 16px; text-align:center; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Link</th>
-                            </tr>`;
-
-            // Group by status: failed first, then cancelled, in-progress, success, others
+            // Sort by status: failed first, then cancelled, in-progress, success, others
             const statusOrder = (r) => {
               if (r.conclusion === 'failure') return 0;
               if (r.conclusion === 'cancelled') return 1;
@@ -407,26 +323,34 @@ jobs:
             };
             const grouped = [...results].sort((a, b) => statusOrder(a) - statusOrder(b));
 
+            // Daily Success Rate section
+            html += `
+                      <tr>
+                        <td style="padding:0 40px 24px;">
+                          <h2 style="font-size:18px; color:#0f172a; margin:0 0 16px; font-weight:600;">📈 Daily Success Rate (Last 24 hours)</h2>
+                          <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #e2e8f0;">
+                            <tr style="background-color:#f8fafc;">
+                              <th style="padding:12px 16px; text-align:left; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Repository</th>
+                              <th style="padding:12px 16px; text-align:center; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Runs (Success / Total)</th>
+                              <th style="padding:12px 16px; text-align:center; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Success %</th>
+                            </tr>`;
+
             grouped.forEach((r, i) => {
               const bgColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
-              const link = r.runUrl
-                ? `<a href="${r.runUrl}" style="color:#3b82f6; text-decoration:none; font-weight:500;">View Run \u2192</a>`
-                : '\u2014';
+              const pct = r.dailySuccessPercent !== null ? `${r.dailySuccessPercent}%` : '—';
+              const pctColor = r.dailySuccessPercent === null ? '#6b7280' : r.dailySuccessPercent === 100 ? '#16a34a' : r.dailySuccessPercent >= 50 ? '#d97706' : '#dc2626';
+              const pctBg = r.dailySuccessPercent === null ? '#f8fafc' : r.dailySuccessPercent === 100 ? '#f0fdf4' : r.dailySuccessPercent >= 50 ? '#fffbeb' : '#fef2f2';
               html += `
                             <tr style="background-color:${bgColor};">
                               <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9;">
-                                <span style="display:inline-block; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; background-color:${statusColor(r)}20; color:${statusColor(r)};">
-                                  ${statusLabel(r)}
-                                </span>
-                              </td>
-                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9;">
                                 <a href="${r.repoUrl}/actions/workflows/deploy-v2.yml" style="color:#0f172a; text-decoration:none; font-weight:500;">${r.repo}</a>
                               </td>
-                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9; color:#475569; font-size:13px;">
-                                <code style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-size:12px;">${r.branch || '—'}</code>
+                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9; text-align:center; font-size:13px; color:#475569;">${r.dailySuccessful} / ${r.dailyTotal}</td>
+                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9; text-align:center;">
+                                <span style="display:inline-block; padding:4px 12px; border-radius:12px; font-size:13px; font-weight:700; background-color:${pctBg}; color:${pctColor};">
+                                  ${pct}
+                                </span>
                               </td>
-                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9; color:#475569; font-size:13px;">${r.startedAt ? new Date(r.startedAt).toUTCString() : '—'}</td>
-                              <td style="padding:14px 16px; border-bottom:1px solid #f1f5f9; text-align:center;">${link}</td>
                             </tr>`;
             });
 
