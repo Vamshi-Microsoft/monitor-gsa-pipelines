@@ -208,6 +208,11 @@ jobs:
               summary += `> **🚨 ${failed} pipeline(s) require attention!**\n\n`;
             }
 
+            // Configuration display
+            const branchLabel = process.env.MAIN_BRANCH_ONLY === 'true' ? 'main' : 'All';
+            const triggerLabel = (process.env.TRIGGER_FILTER || 'all').trim();
+            summary += `> 🔍 **Configuration :** \`🌿 Branch: ${branchLabel}\` · \`⚡ Trigger: ${triggerLabel}\`\n\n`;
+
             // Sort by status: failed first, then cancelled, in-progress, success, others
             const statusOrder = (r) => {
               if (r.conclusion === 'failure') return 0;
@@ -313,6 +318,19 @@ jobs:
                               </td>
                             </tr>
                           </table>
+                        </td>
+                      </tr>
+
+                      <!-- Configuration Pill Badges -->
+                      <tr>
+                        <td style="padding:12px 40px 16px; text-align:center;">
+                          <span style="font-size:13px; font-weight:600; color:#475569; margin-right:12px;">🔍 Configuration : </span>
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#e0f2fe; color:#0369a1; margin-right:8px;">
+                            🌿 Branch: ${process.env.MAIN_BRANCH_ONLY === 'true' ? 'main' : 'All'}
+                          </span>
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#fef3c7; color:#92400e;">
+                            ⚡ Trigger: ${(process.env.TRIGGER_FILTER || 'all').trim()}
+                          </span>
                         </td>
                       </tr>`;
 
