@@ -99,7 +99,10 @@ jobs:
 
                 const { data: runs } = await github.rest.actions.listWorkflowRuns(listParams);
 
-                if (runs.workflow_runs.length === 0) {
+                // Exclude runs from dependabot branches
+                const filteredRuns = runs.workflow_runs.filter(r => !r.head_branch.startsWith('dependabot'));
+
+                if (filteredRuns.length === 0) {
                   entry.status = 'no_recent_runs';
                   entry.error = 'No workflow runs found in the last 24 hours';
                   results.push(entry);
@@ -109,9 +112,9 @@ jobs:
                 entry.workflowFound = true;
 
                 // Compute daily success percentage from all completed runs
-                const completedRuns = runs.workflow_runs.filter(r => r.status === 'completed');
+                const completedRuns = filteredRuns.filter(r => r.status === 'completed');
                 const successfulRuns = completedRuns.filter(r => r.conclusion === 'success');
-                entry.dailyTotal = runs.workflow_runs.length;
+                entry.dailyTotal = filteredRuns.length;
                 entry.dailyCompleted = completedRuns.length;
                 entry.dailySuccessful = successfulRuns.length;
                 entry.dailySuccessPercent = completedRuns.length > 0
@@ -119,7 +122,7 @@ jobs:
                   : null;
 
                 // The API returns the latest run first — this is the top entry in the UI
-                const latestRun = runs.workflow_runs[0];
+                const latestRun = filteredRuns[0];
 
                 entry.status = latestRun.status;
                 entry.conclusion = latestRun.conclusion;
