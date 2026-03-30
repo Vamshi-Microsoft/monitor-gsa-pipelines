@@ -324,7 +324,7 @@ jobs:
                             <tr>
                               <td style="padding:16px 20px; text-align:center;">
                                 <span style="font-size:24px; font-weight:700; color:${failed > 0 ? '#dc2626' : '#16a34a'};">
-                                  ${failed > 0 ? '🚨' : '🎉'} ${overallStatus}
+                                  ${failed > 0 ? ' ' : '🎉'} ${overallStatus}
                                 </span>
                               </td>
                             </tr>
