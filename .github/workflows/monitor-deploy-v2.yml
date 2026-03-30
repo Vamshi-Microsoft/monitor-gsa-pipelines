@@ -53,7 +53,8 @@ jobs:
               { owner: 'microsoft', repo: 'Conversation-Knowledge-Mining-Solution-Accelerator' },
               { owner: 'microsoft', repo: 'Document-Knowledge-Mining-Solution-Accelerator' },
               { owner: 'microsoft', repo: 'Modernize-your-code-solution-accelerator' },
-              { owner: 'microsoft', repo: 'agentic-applications-for-unified-data-foundation-solution-accelerator' }
+              { owner: 'microsoft', repo: 'agentic-applications-for-unified-data-foundation-solution-accelerator' },
+              { owner: 'Azure-Samples', repo: 'chat-with-your-data-solution-accelerator' }
             ];
 
             const results = [];
