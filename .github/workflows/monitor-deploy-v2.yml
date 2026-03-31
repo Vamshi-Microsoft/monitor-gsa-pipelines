@@ -2,8 +2,9 @@ name: Monitor Deploy-v2 Pipeline
 
 on:
   schedule:
-    # Runs every day at 8:00 AM UTC
-    - cron: '0 8 * * *'
+    # Runs twice daily: 2:00 PM (7:30 PM IST) and 2:00 AM UTC (7:30 AM IST)
+    # 2 PM — catches all morning runs (4:30 AM-11 AM); 2 AM — catches evening runs (5-11 PM)
+    - cron: '0 14,2 * * *'
   workflow_dispatch:
     inputs:
       main_branch_only:
