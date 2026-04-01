@@ -56,6 +56,19 @@ jobs:
 
             for (const owner of forkOwners) {
               for (const repo of repos) {
+                // Check once per repo whether Actions are enabled
+                let actionsEnabled = false;
+                try {
+                  const { data: permissions } = await github.rest.actions.getGithubActionsPermissionsRepository({
+                    owner,
+                    repo
+                  });
+                  actionsEnabled = permissions.enabled === true;
+                } catch (permErr) {
+                  // 404 = repo doesn't exist or no access; 403 = no permission to check
+                  actionsEnabled = false;
+                }
+
                 for (const workflow of workflows) {
                   const entry = {
                     owner,
@@ -73,6 +86,13 @@ jobs:
                   };
 
                   try {
+                    // If Actions are disabled at the repo level, mark as not_found
+                    if (!actionsEnabled) {
+                      entry.status = 'not_found';
+                      entry.error = 'Actions disabled at repository level';
+                      results.push(entry);
+                      continue;
+                    }
                     // Check if the workflow exists and its state
                     let workflowState = null;
                     try {
