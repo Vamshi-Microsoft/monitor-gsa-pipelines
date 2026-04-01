@@ -1,0 +1,431 @@
+name: Monitor Fork Workflows
+
+on:
+  schedule:
+    # Runs daily at 3:00 AM UTC (8:30 AM IST)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  monitor:
+    name: Monitor fork workflow status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check fork workflows
+        id: collect
+        uses: actions/github-script@v7
+        env:
+          FORK_OWNERS: ${{ vars.FORK_OWNERS }}
+          MONITOR_WORKFLOWS: ${{ vars.MONITOR_WORKFLOWS }}
+        with:
+          github-token: ${{ secrets.PIPELINE_MONITOR_PAT }}
+          script: |
+            const repos = [
+              'content-generation-solution-accelerator',
+              'Multi-Agent-Custom-Automation-Engine-Solution-Accelerator',
+              'customer-chatbot-solution-accelerator',
+              'Container-Migration-Solution-Accelerator',
+              'content-processing-solution-accelerator',
+              'Conversation-Knowledge-Mining-Solution-Accelerator',
+              'Document-Knowledge-Mining-Solution-Accelerator',
+              'Modernize-your-code-solution-accelerator',
+              'agentic-applications-for-unified-data-foundation-solution-accelerator',
+              'chat-with-your-data-solution-accelerator'
+            ];
+
+            const forkOwners = (process.env.FORK_OWNERS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const workflows = (process.env.MONITOR_WORKFLOWS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+            if (forkOwners.length === 0) {
+              core.setFailed('FORK_OWNERS variable is not set. Add a comma-separated list of fork owner usernames as a repository variable.');
+              return;
+            }
+            if (workflows.length === 0) {
+              core.setFailed('MONITOR_WORKFLOWS variable is not set. Add a comma-separated list of workflow filenames (e.g. CI.yml,deploy-v2.yml) as a repository variable.');
+              return;
+            }
+
+            const results = [];
+
+            for (const owner of forkOwners) {
+              for (const repo of repos) {
+                for (const workflow of workflows) {
+                  const entry = {
+                    owner,
+                    repo,
+                    workflow,
+                    forkUrl: `https://github.com/${owner}/${repo}`,
+                    workflowUrl: `https://github.com/${owner}/${repo}/actions/workflows/${workflow}`,
+                    status: 'unknown',       // 'active' | 'disabled' | 'no_runs' | 'repo_not_found' | 'error'
+                    lastRunDate: null,
+                    lastRunUrl: null,
+                    lastRunConclusion: null,
+                    lastRunBranch: null,
+                    lastRunEvent: null,
+                    error: null
+                  };
+
+                  try {
+                    // First check if the fork repo exists
+                    try {
+                      await github.rest.repos.get({ owner, repo });
+                    } catch (repoErr) {
+                      if (repoErr.status === 404) {
+                        entry.status = 'repo_not_found';
+                        entry.error = 'Fork repository not found';
+                        results.push(entry);
+                        continue;
+                      }
+                      throw repoErr;
+                    }
+
+                    // Try to get the workflow — 404 means disabled or deleted
+                    let workflowId;
+                    try {
+                      const { data: wf } = await github.rest.actions.getWorkflow({
+                        owner,
+                        repo,
+                        workflow_id: workflow
+                      });
+                      workflowId = wf.id;
+
+                      if (wf.state === 'disabled_manually' || wf.state === 'disabled_inactivity') {
+                        entry.status = 'disabled';
+                        results.push(entry);
+                        continue;
+                      }
+                    } catch (wfErr) {
+                      if (wfErr.status === 404) {
+                        entry.status = 'disabled';
+                        entry.error = 'Workflow not found (404) — likely disabled or removed';
+                        results.push(entry);
+                        continue;
+                      }
+                      throw wfErr;
+                    }
+
+                    // Workflow exists and is not disabled — fetch recent runs
+                    const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                      owner,
+                      repo,
+                      workflow_id: workflow,
+                      per_page: 1
+                    });
+
+                    if (runs.workflow_runs.length === 0) {
+                      entry.status = 'no_runs';
+                      results.push(entry);
+                      continue;
+                    }
+
+                    const latest = runs.workflow_runs[0];
+                    entry.status = 'active';
+                    entry.lastRunDate = latest.created_at;
+                    entry.lastRunUrl = latest.html_url;
+                    entry.lastRunConclusion = latest.conclusion || latest.status;
+                    entry.lastRunBranch = latest.head_branch;
+                    entry.lastRunEvent = latest.event;
+                  } catch (err) {
+                    entry.status = 'error';
+                    entry.error = err.message || 'API error';
+                  }
+
+                  results.push(entry);
+                }
+              }
+            }
+
+            const fs = require('fs');
+            fs.writeFileSync('fork-workflow-results.json', JSON.stringify(results, null, 2));
+
+            const active = results.filter(r => r.status === 'active');
+            const disabled = results.filter(r => r.status === 'disabled');
+            const noRuns = results.filter(r => r.status === 'no_runs');
+            const notFound = results.filter(r => r.status === 'repo_not_found');
+            const errors = results.filter(r => r.status === 'error');
+
+            core.setOutput('total', results.length);
+            core.setOutput('active_count', active.length);
+            core.setOutput('disabled_count', disabled.length);
+            core.setOutput('results_json', JSON.stringify(results));
+
+      - name: Generate GitHub Summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('fork-workflow-results.json', 'utf8'));
+
+            const active = results.filter(r => r.status === 'active');
+            const disabled = results.filter(r => r.status === 'disabled');
+            const noRuns = results.filter(r => r.status === 'no_runs');
+            const repoNotFound = results.filter(r => r.status === 'repo_not_found');
+            const errors = results.filter(r => r.status === 'error');
+
+            let summary = '';
+
+            // Header
+            summary += `# 🔍 Fork Workflow Monitor\n\n`;
+
+            if (active.length > 0) {
+              summary += `> **🚨 ${active.length} workflow(s) are ACTIVE on forks — may cause unintended deployments and cost!**\n\n`;
+            } else {
+              summary += `> **✅ All monitored fork workflows are disabled or have no runs.**\n\n`;
+            }
+
+            // Stats
+            summary += `> 🟢 \`${active.length} Active\` · ⚫ \`${disabled.length} Disabled\` · ⚪ \`${noRuns.length} No Runs\` · 🔘 \`${repoNotFound.length} Repo Not Found\` · ❗ \`${errors.length} Errors\`\n\n`;
+
+            // Active workflows — these are the ones that matter
+            if (active.length > 0) {
+              summary += `## 🚨 Active Workflows (Needs Attention)\n\n`;
+              summary += `| Owner | Repository | Workflow | Last Run | Conclusion | Branch | Trigger | Link |\n`;
+              summary += `|:------|:-----------|:---------|:---------|:-----------|:-------|:--------|:-----|\n`;
+
+              for (const r of active) {
+                const runDate = r.lastRunDate ? new Date(r.lastRunDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+                const conclusion = r.lastRunConclusion || '—';
+                const conclusionIcon = conclusion === 'success' ? '✅' : conclusion === 'failure' ? '❌' : '⏳';
+                const link = r.lastRunUrl ? `[View](${r.lastRunUrl})` : '—';
+                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ${runDate} | ${conclusionIcon} \`${conclusion}\` | ${r.lastRunBranch || '—'} | ${r.lastRunEvent || '—'} | ${link} |\n`;
+              }
+              summary += '\n';
+            }
+
+            // Disabled workflows
+            if (disabled.length > 0) {
+              summary += `## ✅ Disabled / Not Found Workflows\n\n`;
+              summary += `| Owner | Repository | Workflow | Status |\n`;
+              summary += `|:------|:-----------|:---------|:-------|\n`;
+
+              for (const r of disabled) {
+                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ⚫ Disabled |\n`;
+              }
+              summary += '\n';
+            }
+
+            // No runs
+            if (noRuns.length > 0) {
+              summary += `## ⚪ Workflows With No Runs\n\n`;
+              summary += `| Owner | Repository | Workflow |\n`;
+              summary += `|:------|:-----------|:---------|\n`;
+
+              for (const r of noRuns) {
+                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` |\n`;
+              }
+              summary += '\n';
+            }
+
+            // Repo not found
+            if (repoNotFound.length > 0) {
+              summary += `## 🔘 Repositories Not Found\n\n`;
+              for (const r of repoNotFound) {
+                summary += `- **${r.owner}/${r.repo}** — fork does not exist\n`;
+              }
+              summary += '\n';
+            }
+
+            // Errors
+            if (errors.length > 0) {
+              summary += `## ❗ Errors\n\n`;
+              for (const r of errors) {
+                summary += `- **${r.owner}/${r.repo}** (\`${r.workflow}\`): ${r.error}\n`;
+              }
+              summary += '\n';
+            }
+
+            summary += `---\n`;
+            summary += `*🤖 Automated by [Monitor Fork Workflows](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})*\n`;
+
+            await core.summary.addRaw(summary).write();
+
+      - name: Generate Email HTML
+        id: email
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('fork-workflow-results.json', 'utf8'));
+
+            const active = results.filter(r => r.status === 'active');
+            const disabled = results.filter(r => r.status === 'disabled');
+            const noRuns = results.filter(r => r.status === 'no_runs');
+            const repoNotFound = results.filter(r => r.status === 'repo_not_found');
+            const errors = results.filter(r => r.status === 'error');
+
+            const overallStatus = active.length > 0 ? 'ACTION REQUIRED' : 'ALL CLEAR';
+
+            let html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            </head>
+            <body style="margin:0; padding:0; background-color:#f1f5f9; font-family:'Segoe UI',Roboto,Arial,sans-serif;">
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9; padding:32px 0;">
+                <tr>
+                  <td align="center">
+                    <table width="720" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+                      <!-- Status Banner -->
+                      <tr>
+                        <td style="padding:24px 40px 0;">
+                          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:${active.length > 0 ? '#fef2f2' : '#f0fdf4'}; border-radius:8px; border:1px solid ${active.length > 0 ? '#fecaca' : '#bbf7d0'};">
+                            <tr>
+                              <td style="padding:16px 20px; text-align:center;">
+                                <span style="font-size:24px; font-weight:700; color:${active.length > 0 ? '#dc2626' : '#16a34a'};">
+                                  ${active.length > 0 ? '🚨' : '✅'} ${overallStatus}
+                                </span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+
+                      <!-- Stats -->
+                      <tr>
+                        <td style="padding:16px 40px; text-align:center;">
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:${active.length > 0 ? '#fef2f2' : '#f0fdf4'}; color:${active.length > 0 ? '#dc2626' : '#16a34a'}; margin-right:8px;">
+                            🟢 ${active.length} Active
+                          </span>
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#f1f5f9; color:#475569; margin-right:8px;">
+                            ⚫ ${disabled.length} Disabled
+                          </span>
+                          <span style="display:inline-block; padding:5px 14px; border-radius:16px; font-size:12px; font-weight:600; background:#f1f5f9; color:#475569;">
+                            ⚪ ${noRuns.length} No Runs
+                          </span>
+                        </td>
+                      </tr>`;
+
+            // Active workflows table
+            if (active.length > 0) {
+              html += `
+                      <tr>
+                        <td style="padding:0 40px 24px;">
+                          <h2 style="font-size:18px; color:#dc2626; margin:0 0 16px; font-weight:600;">🚨 Active Workflows (Disable These!)</h2>
+                          <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #fecaca;">
+                            <tr style="background-color:#fef2f2;">
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #fecaca;">Owner</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #fecaca;">Repository</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #fecaca;">Workflow</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #fecaca;">Last Run</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #fecaca;">Result</th>
+                            </tr>`;
+
+              active.forEach((r, i) => {
+                const bgColor = i % 2 === 0 ? '#ffffff' : '#fef8f8';
+                const runDate = r.lastRunDate ? new Date(r.lastRunDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+                const conclusion = r.lastRunConclusion || '—';
+                const conclusionLabel = conclusion === 'success' ? '✅ Success' : conclusion === 'failure' ? '❌ Failed' : `⏳ ${conclusion}`;
+                html += `
+                            <tr style="background-color:${bgColor};">
+                              <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">${r.owner}</td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">
+                                <a href="${r.forkUrl}" style="color:#0f172a; text-decoration:none; font-weight:500;">${r.repo}</a>
+                              </td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">
+                                <a href="${r.workflowUrl}" style="color:#dc2626; text-decoration:none; font-weight:500;">${r.workflow}</a>
+                              </td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px; color:#475569;">
+                                ${r.lastRunUrl ? `<a href="${r.lastRunUrl}" style="color:#3b82f6; text-decoration:none;">${runDate}</a>` : runDate}
+                              </td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">${conclusionLabel}</td>
+                            </tr>`;
+              });
+
+              html += `
+                          </table>
+                        </td>
+                      </tr>`;
+            }
+
+            // Disabled summary
+            if (disabled.length > 0) {
+              html += `
+                      <tr>
+                        <td style="padding:0 40px 24px;">
+                          <h2 style="font-size:18px; color:#16a34a; margin:0 0 16px; font-weight:600;">✅ Disabled Workflows (${disabled.length})</h2>
+                          <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #e2e8f0;">
+                            <tr style="background-color:#f8fafc;">
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Owner</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Repository</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Workflow</th>
+                            </tr>`;
+
+              disabled.forEach((r, i) => {
+                const bgColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+                html += `
+                            <tr style="background-color:${bgColor};">
+                              <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.owner}</td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.repo}</td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.workflow}</td>
+                            </tr>`;
+              });
+
+              html += `
+                          </table>
+                        </td>
+                      </tr>`;
+            }
+
+            html += `
+                      <!-- Footer -->
+                      <tr>
+                        <td style="background:#f8fafc; padding:20px 40px; text-align:center; border-top:1px solid #e2e8f0;">
+                          <p style="margin:0; font-size:13px; color:#94a3b8;">
+                            🤖 Automated Fork Workflow Monitor ·
+                            <a href="${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}" style="color:#3b82f6; text-decoration:none;">View Workflow Run</a>
+                          </p>
+                        </td>
+                      </tr>
+
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>`;
+
+            fs.writeFileSync('fork-monitor-email.html', html);
+
+            const subject = active.length > 0
+              ? `🚨 Fork Workflow Alert: ${active.length} workflow(s) ACTIVE on forks — ${new Date().toLocaleDateString()}`
+              : `✅ Fork Workflow Monitor: All workflows disabled — ${new Date().toLocaleDateString()}`;
+            core.setOutput('subject', subject);
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-workflow-monitor-report
+          path: |
+            fork-workflow-results.json
+            fork-monitor-email.html
+          retention-days: 30
+
+      - name: Send email notification via Logic App
+        shell: bash
+        env:
+          LOGICAPP_URL: ${{ secrets.EMAILNOTIFICATION_LOGICAPP_URL_TA }}
+          EMAIL_SUBJECT: ${{ steps.email.outputs.subject }}
+        run: |
+          EMAIL_HTML=$(cat fork-monitor-email.html | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+          
+          EMAIL_BODY=$(cat <<EOF
+          {
+            "body": ${EMAIL_HTML},
+            "subject": "${EMAIL_SUBJECT}"
+          }
+          EOF
+          )
+          
+          curl -X POST "${LOGICAPP_URL}" \
+            -H "Content-Type: application/json" \
+            -d "$EMAIL_BODY" || echo "Failed to send fork workflow monitor notification"
