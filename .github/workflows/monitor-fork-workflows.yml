@@ -86,32 +86,29 @@ jobs:
                       throw repoErr;
                     }
 
-                    // Try to get the workflow — 404 means disabled or deleted
-                    let workflowId;
+                    // Try to get the workflow — 404 means deleted/removed
+                    let workflowState = null;
                     try {
                       const { data: wf } = await github.rest.actions.getWorkflow({
                         owner,
                         repo,
                         workflow_id: workflow
                       });
-                      workflowId = wf.id;
 
-                      if (wf.state === 'disabled_manually' || wf.state === 'disabled_inactivity') {
-                        entry.status = 'disabled';
-                        results.push(entry);
-                        continue;
-                      }
+                      // state can be: active, disabled_fork, disabled_manually,
+                      // disabled_inactivity, deleted, unknown
+                      workflowState = wf.state;
                     } catch (wfErr) {
                       if (wfErr.status === 404) {
                         entry.status = 'disabled';
-                        entry.error = 'Workflow not found (404) — likely disabled or removed';
+                        entry.error = 'Workflow not found (404) — removed or never existed';
                         results.push(entry);
                         continue;
                       }
                       throw wfErr;
                     }
 
-                    // Workflow exists and is not disabled — fetch recent runs
+                    // Fetch last run regardless of state (to show when it was last active)
                     const { data: runs } = await github.rest.actions.listWorkflowRuns({
                       owner,
                       repo,
@@ -119,19 +116,27 @@ jobs:
                       per_page: 1
                     });
 
-                    if (runs.workflow_runs.length === 0) {
-                      entry.status = 'no_runs';
-                      results.push(entry);
-                      continue;
+                    // Populate last run info if any runs exist
+                    if (runs.workflow_runs.length > 0) {
+                      const latest = runs.workflow_runs[0];
+                      entry.lastRunDate = latest.created_at;
+                      entry.lastRunUrl = latest.html_url;
+                      entry.lastRunConclusion = latest.conclusion || latest.status;
+                      entry.lastRunBranch = latest.head_branch;
+                      entry.lastRunEvent = latest.event;
                     }
 
-                    const latest = runs.workflow_runs[0];
-                    entry.status = 'active';
-                    entry.lastRunDate = latest.created_at;
-                    entry.lastRunUrl = latest.html_url;
-                    entry.lastRunConclusion = latest.conclusion || latest.status;
-                    entry.lastRunBranch = latest.head_branch;
-                    entry.lastRunEvent = latest.event;
+                    // Determine status based on workflow state
+                    // Only 'active' means the workflow is enabled; everything else is disabled
+                    // (disabled_fork, disabled_manually, disabled_inactivity, deleted, unknown)
+                    if (workflowState !== 'active') {
+                      entry.status = 'disabled';
+                      entry.error = `Workflow state: ${workflowState}`;
+                    } else if (runs.workflow_runs.length === 0) {
+                      entry.status = 'no_runs';
+                    } else {
+                      entry.status = 'active';
+                    }
                   } catch (err) {
                     entry.status = 'error';
                     entry.error = err.message || 'API error';
@@ -202,11 +207,13 @@ jobs:
             // Disabled workflows
             if (disabled.length > 0) {
               summary += `## ✅ Disabled / Not Found Workflows\n\n`;
-              summary += `| Owner | Repository | Workflow | Status |\n`;
-              summary += `|:------|:-----------|:---------|:-------|\n`;
+              summary += `| Owner | Repository | Workflow | Status | Last Run Date |\n`;
+              summary += `|:------|:-----------|:---------|:-------|:--------------|\n`;
 
               for (const r of disabled) {
-                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ⚫ Disabled |\n`;
+                const lastRun = r.lastRunDate ? new Date(r.lastRunDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : 'Never';
+                const stateNote = r.error || 'Disabled';
+                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ⚫ ${stateNote} | ${lastRun} |\n`;
               }
               summary += '\n';
             }
@@ -247,6 +254,7 @@ jobs:
             await core.summary.addRaw(summary).write();
 
       - name: Generate Email HTML
+        if: false
         id: email
         uses: actions/github-script@v7
         with:
@@ -358,15 +366,21 @@ jobs:
                               <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Owner</th>
                               <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Repository</th>
                               <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Workflow</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">State</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e2e8f0;">Last Run</th>
                             </tr>`;
 
               disabled.forEach((r, i) => {
                 const bgColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+                const lastRun = r.lastRunDate ? new Date(r.lastRunDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Never';
+                const stateNote = r.error || 'Disabled';
                 html += `
                             <tr style="background-color:${bgColor};">
                               <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.owner}</td>
                               <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.repo}</td>
                               <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px;">${r.workflow}</td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; color:#64748b;">${stateNote}</td>
+                              <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; color:#475569;">${lastRun}</td>
                             </tr>`;
               });
 
@@ -407,10 +421,10 @@ jobs:
           name: fork-workflow-monitor-report
           path: |
             fork-workflow-results.json
-            fork-monitor-email.html
           retention-days: 30
 
       - name: Send email notification via Logic App
+        if: false
         shell: bash
         env:
           LOGICAPP_URL: ${{ secrets.EMAILNOTIFICATION_LOGICAPP_URL_TA }}
