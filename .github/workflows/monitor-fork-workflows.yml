@@ -184,9 +184,6 @@ jobs:
               summary += `> **✅ All monitored fork workflows are disabled or not found.**\n\n`;
             }
 
-            // Stats
-            summary += `> 🟢 \`${active.length} Active\` · ⚫ \`${disabled.length} Disabled\` · 🔘 \`${notFound.length} Not Found\`\n\n`;
-
             // Active workflows — only these need attention
             if (active.length > 0) {
               summary += `## 🚨 Active Workflows (Needs Attention)\n\n`;
