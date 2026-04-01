@@ -63,7 +63,7 @@ jobs:
                     workflow,
                     forkUrl: `https://github.com/${owner}/${repo}`,
                     workflowUrl: `https://github.com/${owner}/${repo}/actions/workflows/${workflow}`,
-                    status: 'unknown',       // 'active' | 'disabled' | 'no_runs' | 'repo_not_found' | 'error'
+                    status: 'unknown',       // 'active' | 'disabled' | 'not_found'
                     lastRunDate: null,
                     lastRunUrl: null,
                     lastRunConclusion: null,
@@ -73,20 +73,7 @@ jobs:
                   };
 
                   try {
-                    // First check if the fork repo exists
-                    try {
-                      await github.rest.repos.get({ owner, repo });
-                    } catch (repoErr) {
-                      if (repoErr.status === 404) {
-                        entry.status = 'repo_not_found';
-                        entry.error = 'Fork repository not found';
-                        results.push(entry);
-                        continue;
-                      }
-                      throw repoErr;
-                    }
-
-                    // Try to get the workflow — 404 means deleted/removed
+                    // Check if the workflow exists and its state
                     let workflowState = null;
                     try {
                       const { data: wf } = await github.rest.actions.getWorkflow({
@@ -94,21 +81,29 @@ jobs:
                         repo,
                         workflow_id: workflow
                       });
-
-                      // state can be: active, disabled_fork, disabled_manually,
-                      // disabled_inactivity, deleted, unknown
                       workflowState = wf.state;
                     } catch (wfErr) {
+                      // 404 = actions disabled on repo, workflow doesn't exist, or repo not found
                       if (wfErr.status === 404) {
-                        entry.status = 'disabled';
-                        entry.error = 'Workflow not found (404) — removed or never existed';
+                        entry.status = 'not_found';
+                        entry.error = 'Workflow/repo not found (404) — actions disabled or does not exist';
                         results.push(entry);
                         continue;
                       }
                       throw wfErr;
                     }
 
-                    // Fetch last run regardless of state (to show when it was last active)
+                    // Only 'active' means the workflow is enabled
+                    // All other states (disabled_fork, disabled_manually, disabled_inactivity, etc.) = disabled
+                    if (workflowState !== 'active') {
+                      entry.status = 'disabled';
+                      entry.error = `Workflow state: ${workflowState}`;
+                      results.push(entry);
+                      continue;
+                    }
+
+                    // Workflow is active — fetch last run details
+                    entry.status = 'active';
                     const { data: runs } = await github.rest.actions.listWorkflowRuns({
                       owner,
                       repo,
@@ -116,7 +111,6 @@ jobs:
                       per_page: 1
                     });
 
-                    // Populate last run info if any runs exist
                     if (runs.workflow_runs.length > 0) {
                       const latest = runs.workflow_runs[0];
                       entry.lastRunDate = latest.created_at;
@@ -125,20 +119,8 @@ jobs:
                       entry.lastRunBranch = latest.head_branch;
                       entry.lastRunEvent = latest.event;
                     }
-
-                    // Determine status based on workflow state
-                    // Only 'active' means the workflow is enabled; everything else is disabled
-                    // (disabled_fork, disabled_manually, disabled_inactivity, deleted, unknown)
-                    if (workflowState !== 'active') {
-                      entry.status = 'disabled';
-                      entry.error = `Workflow state: ${workflowState}`;
-                    } else if (runs.workflow_runs.length === 0) {
-                      entry.status = 'no_runs';
-                    } else {
-                      entry.status = 'active';
-                    }
                   } catch (err) {
-                    entry.status = 'error';
+                    entry.status = 'not_found';
                     entry.error = err.message || 'API error';
                   }
 
@@ -152,13 +134,12 @@ jobs:
 
             const active = results.filter(r => r.status === 'active');
             const disabled = results.filter(r => r.status === 'disabled');
-            const noRuns = results.filter(r => r.status === 'no_runs');
-            const notFound = results.filter(r => r.status === 'repo_not_found');
-            const errors = results.filter(r => r.status === 'error');
+            const notFound = results.filter(r => r.status === 'not_found');
 
             core.setOutput('total', results.length);
             core.setOutput('active_count', active.length);
             core.setOutput('disabled_count', disabled.length);
+            core.setOutput('not_found_count', notFound.length);
             core.setOutput('results_json', JSON.stringify(results));
 
       - name: Generate GitHub Summary
@@ -170,9 +151,7 @@ jobs:
 
             const active = results.filter(r => r.status === 'active');
             const disabled = results.filter(r => r.status === 'disabled');
-            const noRuns = results.filter(r => r.status === 'no_runs');
-            const repoNotFound = results.filter(r => r.status === 'repo_not_found');
-            const errors = results.filter(r => r.status === 'error');
+            const notFound = results.filter(r => r.status === 'not_found');
 
             let summary = '';
 
@@ -182,13 +161,13 @@ jobs:
             if (active.length > 0) {
               summary += `> **🚨 ${active.length} workflow(s) are ACTIVE on forks — may cause unintended deployments and cost!**\n\n`;
             } else {
-              summary += `> **✅ All monitored fork workflows are disabled or have no runs.**\n\n`;
+              summary += `> **✅ All monitored fork workflows are disabled or not found.**\n\n`;
             }
 
             // Stats
-            summary += `> 🟢 \`${active.length} Active\` · ⚫ \`${disabled.length} Disabled\` · ⚪ \`${noRuns.length} No Runs\` · 🔘 \`${repoNotFound.length} Repo Not Found\` · ❗ \`${errors.length} Errors\`\n\n`;
+            summary += `> 🟢 \`${active.length} Active\` · ⚫ \`${disabled.length} Disabled\` · 🔘 \`${notFound.length} Not Found\`\n\n`;
 
-            // Active workflows — these are the ones that matter
+            // Active workflows — only these need attention
             if (active.length > 0) {
               summary += `## 🚨 Active Workflows (Needs Attention)\n\n`;
               summary += `| Owner | Repository | Workflow | Last Run | Conclusion | Branch | Trigger | Link |\n`;
@@ -200,50 +179,6 @@ jobs:
                 const conclusionIcon = conclusion === 'success' ? '✅' : conclusion === 'failure' ? '❌' : '⏳';
                 const link = r.lastRunUrl ? `[View](${r.lastRunUrl})` : '—';
                 summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ${runDate} | ${conclusionIcon} \`${conclusion}\` | ${r.lastRunBranch || '—'} | ${r.lastRunEvent || '—'} | ${link} |\n`;
-              }
-              summary += '\n';
-            }
-
-            // Disabled workflows
-            if (disabled.length > 0) {
-              summary += `## ✅ Disabled / Not Found Workflows\n\n`;
-              summary += `| Owner | Repository | Workflow | Status | Last Run Date |\n`;
-              summary += `|:------|:-----------|:---------|:-------|:--------------|\n`;
-
-              for (const r of disabled) {
-                const lastRun = r.lastRunDate ? new Date(r.lastRunDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : 'Never';
-                const stateNote = r.error || 'Disabled';
-                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` | ⚫ ${stateNote} | ${lastRun} |\n`;
-              }
-              summary += '\n';
-            }
-
-            // No runs
-            if (noRuns.length > 0) {
-              summary += `## ⚪ Workflows With No Runs\n\n`;
-              summary += `| Owner | Repository | Workflow |\n`;
-              summary += `|:------|:-----------|:---------|\n`;
-
-              for (const r of noRuns) {
-                summary += `| ${r.owner} | ${r.repo} | \`${r.workflow}\` |\n`;
-              }
-              summary += '\n';
-            }
-
-            // Repo not found
-            if (repoNotFound.length > 0) {
-              summary += `## 🔘 Repositories Not Found\n\n`;
-              for (const r of repoNotFound) {
-                summary += `- **${r.owner}/${r.repo}** — fork does not exist\n`;
-              }
-              summary += '\n';
-            }
-
-            // Errors
-            if (errors.length > 0) {
-              summary += `## ❗ Errors\n\n`;
-              for (const r of errors) {
-                summary += `- **${r.owner}/${r.repo}** (\`${r.workflow}\`): ${r.error}\n`;
               }
               summary += '\n';
             }
