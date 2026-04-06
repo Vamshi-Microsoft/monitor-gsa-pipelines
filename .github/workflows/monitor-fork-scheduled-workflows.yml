@@ -181,18 +181,6 @@ jobs:
 
               echo "    ✔️  Parent: ${parent_full}"
 
-              # ── Check if Actions are enabled on this repo ──
-              actions_perms=$(api_get "${API_BASE}/repos/${repo_full}/actions/permissions") || {
-                echo "    ℹ️  Could not check Actions permissions — assuming disabled"
-                continue
-              }
-
-              actions_enabled=$(echo "$actions_perms" | jq -r '.enabled // false')
-              if [[ "$actions_enabled" != "true" ]]; then
-                echo "    ℹ️  Actions are disabled on this repo — skipping"
-                continue
-              fi
-
               # Fetch workflows for this repo
               wf_json=$(api_get "${API_BASE}/repos/${repo_full}/actions/workflows") || {
                 echo "    ⚠️  Could not fetch workflows" | tee -a "$ERRORS_FILE"
