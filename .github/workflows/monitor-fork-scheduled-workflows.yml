@@ -14,7 +14,7 @@ jobs:
     name: Scan forked repos for schedule triggers
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.PIPELINE_MONITOR_PAT }}
     steps:
       - name: Validate inputs
         run: |
