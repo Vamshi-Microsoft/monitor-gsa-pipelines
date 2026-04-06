@@ -18,8 +18,8 @@ jobs:
     steps:
       - name: Validate inputs
         run: |
-          if [[ -z "${{ vars.GITHUB_USERNAMES }}" ]]; then
-            echo "::error::Repository variable GITHUB_USERNAMES is not set. Add a comma-separated list of GitHub usernames."
+          if [[ -z "${{ vars.FORK_OWNERS }}" ]]; then
+            echo "::error::Repository variable FORK_OWNERS is not set. Add a comma-separated list of GitHub usernames."
             exit 1
           fi
 
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          USERNAMES="${{ vars.GITHUB_USERNAMES }}"
+          USERNAMES="${{ vars.FORK_OWNERS }}"
           API_BASE="https://api.github.com"
           WARNINGS_FILE=$(mktemp)
           ERRORS_FILE=$(mktemp)
