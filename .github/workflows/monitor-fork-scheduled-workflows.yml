@@ -1,0 +1,339 @@
+name: Monitor Forked Repos for Scheduled Workflows
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Daily at 3:00 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scan:
+    name: Scan forked repos for schedule triggers
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ -z "${{ vars.GITHUB_USERNAMES }}" ]]; then
+            echo "::error::Repository variable GITHUB_USERNAMES is not set. Add a comma-separated list of GitHub usernames."
+            exit 1
+          fi
+
+      - name: Scan forked repositories
+        id: scan
+        run: |
+          set -euo pipefail
+
+          USERNAMES="${{ vars.GITHUB_USERNAMES }}"
+          API_BASE="https://api.github.com"
+          WARNINGS_FILE=$(mktemp)
+          ERRORS_FILE=$(mktemp)
+          TOTAL_REPOS=0
+          TOTAL_FORKS=0
+
+          # ── Target parent repos — only forks of these repos are scanned ──
+          TARGET_REPOS=(
+            "content-generation-solution-accelerator"
+            "Multi-Agent-Custom-Automation-Engine-Solution-Accelerator"
+            "customer-chatbot-solution-accelerator"
+            "Container-Migration-Solution-Accelerator"
+            "content-processing-solution-accelerator"
+            "Conversation-Knowledge-Mining-Solution-Accelerator"
+            "Document-Knowledge-Mining-Solution-Accelerator"
+            "Modernize-your-code-solution-accelerator"
+            "agentic-applications-for-unified-data-foundation-solution-accelerator"
+            "chat-with-your-data-solution-accelerator"
+          )
+
+          # ── Helper: check if a value exists in TARGET_REPOS ──
+          is_target_repo() {
+            local name="$1"
+            for target in "${TARGET_REPOS[@]}"; do
+              if [[ "$target" == "$name" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          # ── Helper: authenticated GET with error handling ──
+          api_get() {
+            local url="$1"
+            local response http_code body
+
+            response=$(curl -sS -w "\n%{http_code}" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$url" 2>&1) || {
+              echo "::warning::curl failed for ${url}"
+              return 1
+            }
+
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+
+            if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+              echo "::warning::HTTP ${http_code} from ${url}"
+              return 1
+            fi
+
+            echo "$body"
+          }
+
+          # ── Helper: fetch all pages for a paginated endpoint ──
+          fetch_all_pages() {
+            local base_url="$1"
+            local separator="?"
+            [[ "$base_url" == *"?"* ]] && separator="&"
+
+            local page=1
+            local all_items="[]"
+
+            while true; do
+              local page_data
+              page_data=$(api_get "${base_url}${separator}per_page=100&page=${page}") || break
+
+              local count
+              count=$(echo "$page_data" | jq 'if type == "array" then length else 0 end')
+
+              if [[ "$count" -eq 0 ]]; then
+                break
+              fi
+
+              all_items=$(jq -s 'add' <(echo "$all_items") <(echo "$page_data"))
+              page=$((page + 1))
+
+              if [[ "$count" -lt 100 ]]; then
+                break
+              fi
+            done
+
+            echo "$all_items"
+          }
+
+          # ── Parse usernames ──
+          IFS=',' read -ra USERS <<< "$USERNAMES"
+
+          echo "==========================================="
+          echo " Fork Scheduled-Workflow Scanner"
+          echo "==========================================="
+          echo ""
+
+          for raw_user in "${USERS[@]}"; do
+            username=$(echo "$raw_user" | xargs) # trim whitespace
+            if [[ -z "$username" ]]; then
+              continue
+            fi
+
+            echo "───────────────────────────────────────────"
+            echo "User: ${username}"
+            echo "───────────────────────────────────────────"
+
+            # ── Fetch all repos for this user ──
+            repos_json=$(fetch_all_pages "${API_BASE}/users/${username}/repos") || {
+              echo "  ⚠️  Failed to fetch repos for ${username}" | tee -a "$ERRORS_FILE"
+              continue
+            }
+
+            total_count=$(echo "$repos_json" | jq 'length')
+            fork_names=$(echo "$repos_json" | jq -r '.[] | select(.fork == true) | .full_name')
+            fork_count=$(echo "$repos_json" | jq '[.[] | select(.fork == true)] | length')
+
+            echo "  Repos: ${total_count} total, ${fork_count} forks"
+            TOTAL_REPOS=$((TOTAL_REPOS + total_count))
+            TOTAL_FORKS=$((TOTAL_FORKS + fork_count))
+
+            if [[ "$fork_count" -eq 0 ]]; then
+              echo "  No forks found — skipping."
+              continue
+            fi
+
+            # ── Iterate over forked repos ──
+            while IFS= read -r repo_full; do
+              [[ -z "$repo_full" ]] && continue
+              repo_name="${repo_full#*/}"
+
+              echo "  📂 ${repo_full}"
+
+              # ── Check if this fork's parent is in the target list ──
+              repo_detail=$(api_get "${API_BASE}/repos/${repo_full}") || {
+                echo "    ⚠️  Could not fetch repo details" | tee -a "$ERRORS_FILE"
+                continue
+              }
+
+              parent_name=$(echo "$repo_detail" | jq -r '.parent.name // empty')
+              parent_full=$(echo "$repo_detail" | jq -r '.parent.full_name // empty')
+
+              if [[ -z "$parent_name" ]]; then
+                echo "    ⏭️  No parent info — skipping"
+                continue
+              fi
+
+              if ! is_target_repo "$parent_name"; then
+                echo "    ⏭️  Parent '${parent_full}' is not a monitored repo — skipping"
+                continue
+              fi
+
+              echo "    ✔️  Parent: ${parent_full}"
+
+              # Fetch workflows for this repo
+              wf_json=$(api_get "${API_BASE}/repos/${repo_full}/actions/workflows") || {
+                echo "    ⚠️  Could not fetch workflows" | tee -a "$ERRORS_FILE"
+                continue
+              }
+
+              wf_count=$(echo "$wf_json" | jq '.total_count // 0')
+              if [[ "$wf_count" -eq 0 ]]; then
+                echo "    No workflows"
+                continue
+              fi
+
+              echo "    Workflows: ${wf_count}"
+
+              # Check each workflow file for schedule trigger
+              echo "$wf_json" | jq -r '.workflows[] | "\(.id)|\(.path)|\(.state)|\(.name)"' | \
+              while IFS='|' read -r wf_id wf_path wf_state wf_name; do
+                [[ -z "$wf_id" ]] && continue
+
+                # Fetch raw workflow YAML content
+                file_content=$(curl -sS -w "\n%{http_code}" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github.raw+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${API_BASE}/repos/${repo_full}/contents/${wf_path}" 2>/dev/null)
+
+                file_http=$(echo "$file_content" | tail -n1)
+                file_body=$(echo "$file_content" | sed '$d')
+
+                if [[ "$file_http" != "200" ]]; then
+                  echo "    ⚠️  Could not read ${wf_path} (HTTP ${file_http})"
+                  continue
+                fi
+
+                # Check for schedule trigger
+                if echo "$file_body" | grep -qE '^\s*-?\s*schedule\s*:|^\s*schedule\s*:'; then
+                  # Only report active workflows — skip disabled ones
+                  if [[ "$wf_state" != "active" ]]; then
+                    echo "    ℹ️  ${wf_name} has schedule but is already ${wf_state} — OK"
+                    continue
+                  fi
+
+                  echo "    🚨 ACTIVE SCHEDULED WORKFLOW DETECTED"
+                  echo "       Name:  ${wf_name}"
+                  echo "       File:  ${wf_path}"
+                  echo "       URL:   https://github.com/${repo_full}/actions/workflows/${wf_path##*/}"
+                  echo "       🔗 Disable: https://github.com/${repo_full}/actions/workflows/${wf_path##*/}"
+
+                  # Record warning (only active)
+                  echo "${username}|${repo_full}|${wf_path}|${wf_state}|${wf_id}|${wf_name}" >> "$WARNINGS_FILE"
+                fi
+              done
+            done <<< "$fork_names"
+          done
+
+          # ── Collect counts ──
+          SCHEDULED_COUNT=0
+          [[ -s "$WARNINGS_FILE" ]] && SCHEDULED_COUNT=$(wc -l < "$WARNINGS_FILE")
+
+          # ── Console summary ──
+          echo ""
+          echo "==========================================="
+          echo " SCAN SUMMARY"
+          echo "==========================================="
+          echo "  Users scanned:        ${#USERS[@]}"
+          echo "  Total repos:          ${TOTAL_REPOS}"
+          echo "  Forked repos:         ${TOTAL_FORKS}"
+          echo "  Scheduled workflows:  ${SCHEDULED_COUNT}"
+          echo "==========================================="
+
+          if [[ "$SCHEDULED_COUNT" -gt 0 ]]; then
+            echo ""
+            echo "Findings:"
+            while IFS='|' read -r user repo path state wf_id name; do
+              echo "  • ${user} / ${repo} — ${path} [${state}]"
+            done < "$WARNINGS_FILE"
+          fi
+
+          # ── Persist for summary step ──
+          cp "$WARNINGS_FILE" "${RUNNER_TEMP}/warnings.txt"
+
+          # ── Set outputs ──
+          {
+            echo "total_repos=${TOTAL_REPOS}"
+            echo "total_forks=${TOTAL_FORKS}"
+            echo "scheduled_count=${SCHEDULED_COUNT}"
+          } >> "$GITHUB_OUTPUT"
+
+          # ── Fail the workflow if scheduled workflows were found ──
+          if [[ "$SCHEDULED_COUNT" -gt 0 ]]; then
+            echo "::warning::Found ${SCHEDULED_COUNT} scheduled workflow(s) in forked repos."
+          fi
+
+      - name: Generate job summary
+        if: always()
+        run: |
+          set -euo pipefail
+
+          WARNINGS_FILE="${RUNNER_TEMP}/warnings.txt"
+
+          TOTAL_REPOS="${{ steps.scan.outputs.total_repos }}"
+          TOTAL_FORKS="${{ steps.scan.outputs.total_forks }}"
+          SCHEDULED_COUNT="${{ steps.scan.outputs.scheduled_count }}"
+
+          {
+            echo "# 🔍 Fork Scheduled-Workflow Monitor"
+            echo ""
+
+            if [[ "${SCHEDULED_COUNT:-0}" -gt 0 ]]; then
+              echo "> **🚨 ${SCHEDULED_COUNT} scheduled workflow(s) found in forked repos!**"
+            else
+              echo "> **✅ No scheduled workflows detected in any fork.**"
+            fi
+
+            echo ""
+            echo "## 📊 Statistics"
+            echo ""
+            echo "| Metric | Count |"
+            echo "|:-------|------:|"
+            echo "| Total repos scanned | ${TOTAL_REPOS:-0} |"
+            echo "| Forked repos checked | ${TOTAL_FORKS:-0} |"
+            echo "| Scheduled workflows found | ${SCHEDULED_COUNT:-0} |"
+            echo ""
+
+            if [[ -s "$WARNINGS_FILE" ]]; then
+              echo "## 🚨 Active Scheduled Workflows Found"
+              echo ""
+
+              # Get unique usernames preserving order
+              users_ordered=$(awk -F'|' '!seen[$1]++ { print $1 }' "$WARNINGS_FILE")
+
+              while IFS= read -r current_user; do
+                [[ -z "$current_user" ]] && continue
+                user_count=$(grep -c "^${current_user}|" "$WARNINGS_FILE")
+
+                echo "### 👤 ${current_user} (${user_count} workflow(s))"
+                echo ""
+                echo "| Repository | Workflow File | State | Action |"
+                echo "|:-----------|:-------------|:------|:-------|"
+
+                grep "^${current_user}|" "$WARNINGS_FILE" | while IFS='|' read -r user repo path state wf_id name; do
+                  repo_link="[${repo}](https://github.com/${repo})"
+                  disable_link="[Disable](https://github.com/${repo}/actions/workflows/${path##*/})"
+
+                  echo "| ${repo_link} | \`${path##*/}\` | \`${state}\` | ${disable_link} |"
+                done
+
+                echo ""
+              done <<< "$users_ordered"
+            fi
+
+            echo "---"
+            echo "*🤖 Automated by [Monitor Fork Scheduled Workflows]"
+            echo "(${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})*"
+
+          } >> "$GITHUB_STEP_SUMMARY"
