@@ -181,24 +181,14 @@ jobs:
 
               echo "    ✔️  Parent: ${parent_full}"
 
-              # ── Check if Actions are enabled at the repo level ──
-              actions_resp=$(curl -sS -w "\n%{http_code}" \
-                -H "Authorization: Bearer ${GH_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "${API_BASE}/repos/${repo_full}/actions/permissions" 2>/dev/null)
+              # ── Check if Actions tab is enabled on this repo ──
+              # If https://github.com/{owner}/{repo}/actions returns 404, Actions are disabled
+              actions_tab_http=$(curl -sS -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token ${GH_TOKEN}" \
+                "https://github.com/${repo_full}/actions" 2>/dev/null)
 
-              actions_http=$(echo "$actions_resp" | tail -n1)
-              actions_body=$(echo "$actions_resp" | sed '$d')
-
-              if [[ "$actions_http" != "200" ]]; then
-                echo "    ℹ️  Actions not accessible (HTTP ${actions_http}) — skipping"
-                continue
-              fi
-
-              actions_enabled=$(echo "$actions_body" | jq -r '.enabled // false')
-              if [[ "$actions_enabled" != "true" ]]; then
-                echo "    ℹ️  Actions are disabled at repo level — skipping"
+              if [[ "$actions_tab_http" != "200" ]]; then
+                echo "    ℹ️  Actions tab disabled (HTTP ${actions_tab_http}) — skipping"
                 continue
               fi
 
