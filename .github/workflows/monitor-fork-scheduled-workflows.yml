@@ -47,6 +47,10 @@ jobs:
             "Modernize-your-code-solution-accelerator"
             "agentic-applications-for-unified-data-foundation-solution-accelerator"
             "chat-with-your-data-solution-accelerator"
+            "Data-and-Agent-Governance-and-Security-Accelerator"
+            "real-time-intelligence-operations-solution-accelerator"
+            "Deploy-Your-AI-Application-In-Production"
+            "unified-data-foundation-with-fabric-solution-accelerator"
           )
 
           # ── Helper: check if a value exists in TARGET_REPOS ──
@@ -373,7 +377,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate per-user email HTML files
-        if: always() && steps.scan.outputs.scheduled_count > 0
+        # if: always() && steps.scan.outputs.scheduled_count > 0
+        if: false # Temporarily disabled
         id: emails
         uses: actions/github-script@v7
         with:
@@ -450,7 +455,7 @@ jobs:
                         <td style="padding:24px 40px 0;">
                           <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#fef2f2; border-radius:8px; border:1px solid #fecaca;">
                             <tr><td style="padding:16px 20px; text-align:center;">
-                              <span style="font-size:24px; font-weight:700; color:#dc2626;">🚨 ACTION REQUIRED</span>
+                              <span style="font-size:24px; font-weight:700; color:#dc2626;">ACTION REQUIRED</span>
                             </td></tr>
                           </table>
                         </td>
@@ -507,7 +512,8 @@ jobs:
             core.setOutput('user_emails_json', JSON.stringify(userEmails));
 
       - name: Send per-user email via Logic App
-        if: always() && steps.scan.outputs.scheduled_count > 0
+        # if: always() && steps.scan.outputs.scheduled_count > 0
+        if: false # Temporarily disabled
         shell: bash
         env:
           LOGICAPP_URL: ${{ secrets.FORK_EMAILNOTIFICATION_LOGICAPP_URL }}
