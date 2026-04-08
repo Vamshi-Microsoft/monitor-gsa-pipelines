@@ -348,6 +348,7 @@ jobs:
           set -euo pipefail
 
           WARNINGS_FILE="${RUNNER_TEMP}/warnings.txt"
+          EXCLUDE_WORKFLOWS="${{ vars.EXCLUDE_WORKFLOWS }}"
 
           TOTAL_REPOS="${{ steps.scan.outputs.total_repos }}"
           TOTAL_FORKS="${{ steps.scan.outputs.total_forks }}"
@@ -372,6 +373,20 @@ jobs:
             echo "| Forked repos checked | ${TOTAL_FORKS:-0} |"
             echo "| Scheduled workflows found | ${SCHEDULED_COUNT:-0} |"
             echo ""
+
+            # Show excluded workflows if any
+            if [[ -n "$EXCLUDE_WORKFLOWS" ]]; then
+              echo "## ⏭️ Excluded Workflows"
+              echo ""
+              echo "The following workflow files are excluded from scanning:"
+              echo ""
+              IFS=',' read -ra EXCLUDED_LIST <<< "$EXCLUDE_WORKFLOWS"
+              for excluded in "${EXCLUDED_LIST[@]}"; do
+                excluded=$(echo "$excluded" | xargs)
+                [[ -n "$excluded" ]] && echo "- \`${excluded}\`"
+              done
+              echo ""
+            fi
 
             if [[ -s "$WARNINGS_FILE" ]]; then
               echo "## 🚨 Active Scheduled Workflows Found"
