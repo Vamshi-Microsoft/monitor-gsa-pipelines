@@ -660,7 +660,7 @@ jobs:
                 const w = userWarnings[i];
                 const wfFile = (w.path || '').split('/').pop();
                 const disableUrl = `https://github.com/${w.repo}/actions/workflows/${wfFile}`;
-                const bgColor = i % 2 === 0 ? '#ffffff' : '#faf9f8';
+                const bgColor = i % 2 === 0 ? '#ffffff' : '#ffffff';
                 const borderStyle = i < userWarnings.length - 1 ? 'border-bottom:1px solid #f3f2f1;' : '';
 
                 rows += `
@@ -680,8 +680,8 @@ jobs:
               userSections += `
                 <tr>
                   <td style="padding:0 32px 16px;">
-                    <div style="padding-left:8px;">
-                      <span style="display:inline-block; padding:6px 12px; background:#ffffff; color:#0f548c; font-size:13px; font-weight:700; border:1px solid #d0e7f8; border-bottom:1px solid #ffffff; border-radius:8px 8px 0 0;">
+                    <div style="padding-left:0px;">
+                      <span style="display:inline-block; padding:6px 12px; background:#faf9f8; color:#0f548c; font-size:13px; font-weight:500; border:1px solid #d0e7f8; border-bottom:1px solid #ffffff;">
                         <span style="font-size:14px; margin-right:6px;">&#128100;</span>${username}
                       </span>
                     </div>
