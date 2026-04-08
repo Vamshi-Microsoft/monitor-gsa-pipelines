@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: '0 3 * * *' # Daily at 3:00 AM UTC
   workflow_dispatch:
+    inputs:
+      send_email:
+        description: 'Send notification emails to users'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 permissions:
   contents: read
@@ -426,7 +435,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate per-user email HTML files
-        if: always() && steps.scan.outputs.scheduled_count > 0
+        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
         # if: false # Temporarily disabled
         id: emails
         uses: actions/github-script@v7
@@ -569,7 +578,7 @@ jobs:
             core.setOutput('user_emails_json', JSON.stringify(userEmails));
 
       - name: Send per-user email via Logic App
-        if: always() && steps.scan.outputs.scheduled_count > 0
+        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
         # if: false # Temporarily disabled
         shell: bash
         env:
