@@ -50,8 +50,10 @@ jobs:
           is_excluded_workflow() {
             local file="$1"
             local basename="${file##*/}"
+            local basename_lower="${basename,,}"
             for excluded in "${EXCLUDED_FILES[@]}"; do
-              if [[ "$excluded" == "$basename" ]]; then
+              local excluded_lower="${excluded,,}"
+              if [[ "$excluded_lower" == "$basename_lower" ]]; then
                 return 0
               fi
             done
@@ -260,6 +262,8 @@ jobs:
               echo "$wf_json" | jq -r '.workflows[] | "\(.id)|\(.path)|\(.state)|\(.name)"' | \
               while IFS='|' read -r wf_id wf_path wf_state wf_name; do
                 [[ -z "$wf_id" ]] && continue
+
+                echo "    📄 Checking: ${wf_path##*/} (state: ${wf_state})"
 
                 # Skip excluded workflow files
                 if is_excluded_workflow "$wf_path"; then
