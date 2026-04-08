@@ -475,70 +475,78 @@ jobs:
               const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 
               let rows = '';
+              let rowIndex = 0;
               for (const w of userWarnings) {
                 const wfFile = w.path.split('/').pop();
                 const disableUrl = `https://github.com/${w.repo}/actions/workflows/${wfFile}`;
+                const bgColor = rowIndex % 2 === 0 ? '#ffffff' : '#faf9f8';
+                const borderStyle = rowIndex < userWarnings.length - 1 ? 'border-bottom:1px solid #f3f2f1;' : '';
                 rows += `
-                  <tr>
-                    <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">
-                      <a href="https://github.com/${w.repo}" style="color:#0f172a; text-decoration:none; font-weight:500;">${w.repo}</a>
+                  <tr style="background-color:${bgColor};">
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle}">
+                      <a href="https://github.com/${w.repo}" style="color:#0078d4; text-decoration:none;">${w.repo}</a>
                     </td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">${w.name}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;"><code>${wfFile}</code></td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">${w.state}</td>
-                    <td style="padding:10px 12px; border-bottom:1px solid #fef2f2; font-size:13px;">
-                      <a href="${disableUrl}" style="color:#dc2626; text-decoration:none; font-weight:500;">Disable</a>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} color:#323130;">${w.name}</td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} color:#605e5c;"><code style="background:#f3f2f1; padding:2px 6px; border-radius:3px; font-size:12px;">${wfFile}</code></td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} text-align:center; color:#323130;">Active</td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} text-align:center;">
+                      <a href="${disableUrl}" style="display:inline-block; color:#d13438; text-decoration:none; font-weight:600; font-size:12px; padding:4px 14px; border:1px solid #d13438; border-radius:4px;">Disable</a>
                     </td>
                   </tr>`;
+                rowIndex++;
               }
 
-              const html = `
-              <!DOCTYPE html>
+              const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
+
+              const html = `<!DOCTYPE html>
               <html>
               <head><meta charset="utf-8"></head>
-              <body style="margin:0; padding:0; background-color:#f1f5f9; font-family:'Segoe UI',Roboto,Arial,sans-serif;">
-                <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9; padding:32px 0;">
+              <body style="margin:0; padding:0; background-color:#f0f2f5; font-family:'Segoe UI',Roboto,Arial,sans-serif;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0f2f5; padding:24px 0;">
                   <tr><td align="center">
-                    <table width="720" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+                    <table width="720" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:4px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
                       <tr>
-                        <td style="padding:24px 40px 0;">
-                          <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#fef2f2; border-radius:8px; border:1px solid #fecaca;">
-                            <tr><td style="padding:16px 20px; text-align:center;">
-                              <span style="font-size:24px; font-weight:700; color:#dc2626;">ACTION REQUIRED</span>
-                            </td></tr>
+                        <td style="background-color:#0078d4; padding:20px 32px;">
+                          <table width="100%" cellpadding="0" cellspacing="0">
+                            <tr>
+                              <td>
+                                <p style="margin:0; font-size:20px; font-weight:700; color:#ffffff;">Active Scheduled Workflows — Action Required</p>
+                                <p style="margin:6px 0 0; font-size:13px; color:#b3d7f2;">${username} &bull; ${today}</p>
+                              </td>
+                            </tr>
                           </table>
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding:20px 40px;">
-                          <p style="font-size:15px; color:#334155;">Hi <strong>${username}</strong>,</p>
-                          <p style="font-size:15px; color:#334155;">The automated scan found <strong>${count}</strong> active scheduled workflow(s) in your forked repositories that requires your attention:</p>
+                        <td style="padding:16px 32px 8px;">
+                          <p style="margin:0; font-size:14px; color:#323130;">Hi <strong>${username}</strong>,</p>
+                          <p style="margin:8px 0 0; font-size:14px; color:#605e5c;">The automated scan found <strong>${count}</strong> active scheduled workflow(s) in your forked repositories that require your attention:</p>
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding:0 40px 24px;">
-                          <table width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px; overflow:hidden; border:1px solid #fecaca;">
-                            <tr style="background-color:#fef2f2;">
-                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; border-bottom:2px solid #fecaca;">Repository</th>
-                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; border-bottom:2px solid #fecaca;">Workflow</th>
-                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; border-bottom:2px solid #fecaca;">File</th>
-                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; border-bottom:2px solid #fecaca;">State</th>
-                              <th style="padding:10px 12px; text-align:left; font-size:11px; color:#991b1b; text-transform:uppercase; border-bottom:2px solid #fecaca;">Action</th>
+                        <td style="padding:12px 32px 24px;">
+                          <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #edebe9; border-radius:4px; overflow:hidden;">
+                            <tr style="background-color:#faf9f8;">
+                              <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Repository</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Workflow</th>
+                              <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">File</th>
+                              <th style="padding:10px 12px; text-align:center; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">State</th>
+                              <th style="padding:10px 12px; text-align:center; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Action</th>
                             </tr>
                             ${rows}
                           </table>
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding:0 40px 24px;">
-                          <p style="font-size:14px; color:#475569;">Please disable these scheduled workflows to avoid unnecessary Actions usage on forked repos.</p>
+                        <td style="padding:0 32px 24px;">
+                          <p style="margin:0; font-size:13px; color:#605e5c;">Please disable these scheduled workflows to avoid unnecessary GitHub Actions usage on forked repos.</p>
                         </td>
                       </tr>
                       <tr>
-                        <td style="background:#f8fafc; padding:20px 40px; text-align:center; border-top:1px solid #e2e8f0;">
-                          <p style="margin:0; font-size:13px; color:#94a3b8;">
-                            🤖 Automated Fork Scheduled-Workflow Monitor ·
-                            <a href="${runUrl}" style="color:#3b82f6; text-decoration:none;">View Scan Report</a>
+                        <td style="background-color:#faf9f8; padding:16px 32px; border-top:1px solid #edebe9;">
+                          <p style="margin:0; font-size:12px; color:#a19f9d; text-align:center;">
+                            Automated Fork Scheduled-Workflow Monitor &bull;
+                            <a href="${runUrl}" style="color:#0078d4; text-decoration:none;">View Scan Report</a>
                           </p>
                         </td>
                       </tr>
@@ -552,7 +560,7 @@ jobs:
               const filePath = `email-${safeUser}.html`;
               fs.writeFileSync(filePath, html);
 
-              const subject = `🚨 [Action Required] ${count} Active Scheduled Workflow(s) Found in Your Forks — ${new Date().toLocaleDateString()}`;
+              const subject = `[Action Required] ${count} Active Scheduled Workflow(s) Found in Your Fork Repos`;
 
               userEmails.push({ username, email, subject, file: filePath });
               core.info(`Generated email for ${username} -> ${email} (${count} workflows)`);
