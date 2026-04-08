@@ -434,9 +434,9 @@ jobs:
 
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Generate per-user email HTML files
-        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
-        # if: false # Temporarily disabled
+      # Legacy option: Per-user email flow (kept for future use)
+      - name: Generate per-user email HTML files (legacy)
+        if: false
         id: emails
         uses: actions/github-script@v7
         with:
@@ -577,9 +577,8 @@ jobs:
 
             core.setOutput('user_emails_json', JSON.stringify(userEmails));
 
-      - name: Send per-user email via Logic App
-        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
-        # if: false # Temporarily disabled
+      - name: Send per-user email via Logic App (legacy)
+        if: false
         shell: bash
         env:
           LOGICAPP_URL: ${{ secrets.FORK_EMAILNOTIFICATION_LOGICAPP_URL }}
@@ -617,3 +616,164 @@ jobs:
               && echo "  ✅ Email sent to ${email}" \
               || echo "::warning::Failed to send email to ${email}"
           done
+
+      - name: Generate consolidated email HTML file
+        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
+        id: consolidated_email
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const warningsPath = `${process.env.RUNNER_TEMP}/warnings.txt`;
+
+            if (!fs.existsSync(warningsPath) || fs.statSync(warningsPath).size === 0) {
+              core.info('No warnings - no consolidated email to generate.');
+              core.setOutput('has_email', 'false');
+              core.setOutput('email_subject', '');
+              core.setOutput('email_file', '');
+              return;
+            }
+
+            const warnings = fs.readFileSync(warningsPath, 'utf8').trim().split('\n').map(line => {
+              const [username, repo, path, state, wfId, name] = line.split('|');
+              return { username, repo, path, state, wfId, name };
+            });
+
+            const totalCount = warnings.length;
+            const users = [...new Set(warnings.map(w => w.username))];
+            const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const grouped = {};
+            for (const w of warnings) {
+              if (!grouped[w.username]) grouped[w.username] = [];
+              grouped[w.username].push(w);
+            }
+
+            let userSections = '';
+            for (const username of users) {
+              const userWarnings = grouped[username] || [];
+              const userCount = userWarnings.length;
+              let rows = '';
+
+              for (let i = 0; i < userWarnings.length; i++) {
+                const w = userWarnings[i];
+                const wfFile = (w.path || '').split('/').pop();
+                const disableUrl = `https://github.com/${w.repo}/actions/workflows/${wfFile}`;
+                const bgColor = i % 2 === 0 ? '#ffffff' : '#faf9f8';
+                const borderStyle = i < userWarnings.length - 1 ? 'border-bottom:1px solid #f3f2f1;' : '';
+
+                rows += `
+                  <tr style="background-color:${bgColor};">
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle}">
+                      <a href="https://github.com/${w.repo}" style="color:#0078d4; text-decoration:none;">${w.repo}</a>
+                    </td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} color:#323130;">${w.name}</td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} color:#605e5c;"><code style="background:#f3f2f1; padding:2px 6px; border-radius:3px; font-size:12px;">${wfFile}</code></td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} text-align:center; color:#323130;">${w.state}</td>
+                    <td style="padding:10px 12px; font-size:13px; ${borderStyle} text-align:center;">
+                      <a href="${disableUrl}" style="display:inline-block; color:#d13438; text-decoration:none; font-weight:600; font-size:12px; padding:4px 14px; border:1px solid #d13438; border-radius:4px;">Disable</a>
+                    </td>
+                  </tr>`;
+              }
+
+              userSections += `
+                <tr>
+                  <td style="padding:0 32px 16px;">
+                    <div style="padding-left:8px;">
+                      <span style="display:inline-block; padding:6px 12px; background:#ffffff; color:#0f548c; font-size:13px; font-weight:700; border:1px solid #d0e7f8; border-bottom:1px solid #ffffff; border-radius:8px 8px 0 0;">
+                        <span style="font-size:14px; margin-right:6px;">&#128100;</span>${username}
+                      </span>
+                    </div>
+                    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #edebe9; border-radius:0 4px 4px 4px; overflow:hidden; margin-top:-1px;">
+                      <tr style="background-color:#faf9f8;">
+                        <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Repository</th>
+                        <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Workflow</th>
+                        <th style="padding:10px 12px; text-align:left; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">File</th>
+                        <th style="padding:10px 12px; text-align:center; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">State</th>
+                        <th style="padding:10px 12px; text-align:center; font-size:12px; font-weight:600; color:#323130; border-bottom:2px solid #0078d4;">Action</th>
+                      </tr>
+                      ${rows}
+                    </table>
+                  </td>
+                </tr>`;
+            }
+
+            const html = `<!DOCTYPE html>
+            <html>
+            <head><meta charset="utf-8"></head>
+            <body style="margin:0; padding:0; background-color:#f0f2f5; font-family:'Segoe UI',Roboto,Arial,sans-serif;">
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0f2f5; padding:24px 0;">
+                <tr><td align="center">
+                  <table width="920" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:4px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                    <tr>
+                      <td style="background-color:#0078d4; padding:20px 32px;">
+                        <p style="margin:0; font-size:20px; font-weight:700; color:#ffffff;">Active Scheduled Workflows - ACTION REQUIRED</p>
+                        <p style="margin:6px 0 0; font-size:13px; color:#b3d7f2;">${today}</p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:16px 32px 8px;">
+                        <p style="margin:0; font-size:14px; color:#605e5c;">The automated scan found <strong>${totalCount}</strong> active scheduled workflows, please take the necessary actions.</p>
+                      </td>
+                    </tr>
+                    ${userSections}
+                    <tr>
+                      <td style="padding:0 32px 24px;">
+                        <p style="margin:0; font-size:13px; color:#605e5c;">Please disable these scheduled workflows to avoid unnecessary GitHub Actions usage on forked repos.</p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="background-color:#faf9f8; padding:16px 32px; border-top:1px solid #edebe9;">
+                        <p style="margin:0; font-size:12px; color:#a19f9d; text-align:center;">
+                          Automated Fork Scheduled-Workflow Monitor &bull;
+                          <a href="${runUrl}" style="color:#0078d4; text-decoration:none;">View Scan Report</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td></tr>
+              </table>
+            </body>
+            </html>`;
+
+            const filePath = 'email-consolidated.html';
+            fs.writeFileSync(filePath, html);
+
+            core.setOutput('has_email', 'true');
+            core.setOutput('email_subject', `[Action Required] ${totalCount} Active Scheduled Workflow(s) Found in your Fork Repos`);
+            core.setOutput('email_file', filePath);
+
+      - name: Send consolidated email via Logic App
+        if: always() && steps.scan.outputs.scheduled_count > 0 && (github.event_name == 'schedule' || inputs.send_email == 'true')
+        shell: bash
+        env:
+          LOGICAPP_URL: ${{ secrets.FORK_EMAILNOTIFICATION_LOGICAPP_URL }}
+          HAS_EMAIL: ${{ steps.consolidated_email.outputs.has_email }}
+          EMAIL_SUBJECT: ${{ steps.consolidated_email.outputs.email_subject }}
+          EMAIL_FILE: ${{ steps.consolidated_email.outputs.email_file }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${HAS_EMAIL}" != "true" ]]; then
+            echo "No consolidated email to send."
+            exit 0
+          fi
+
+          echo "📧 Sending consolidated email payload to Logic App..."
+
+          EMAIL_HTML=$(cat "$EMAIL_FILE" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+
+          EMAIL_BODY=$(cat <<EOF
+          {
+            "subject": "${EMAIL_SUBJECT}",
+            "body": ${EMAIL_HTML}
+          }
+          EOF
+          )
+
+          curl -X POST "${LOGICAPP_URL}" \
+            -H "Content-Type: application/json" \
+            -d "$EMAIL_BODY" \
+            && echo "  ✅ Consolidated email payload sent" \
+            || echo "::warning::Failed to send consolidated email payload"
