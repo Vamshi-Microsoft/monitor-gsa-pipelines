@@ -29,10 +29,34 @@ jobs:
           set -euo pipefail
 
           USERNAMES="${{ vars.FORK_OWNERS }}"
+          EXCLUDE_WORKFLOWS="${{ vars.EXCLUDE_WORKFLOWS }}"
           API_BASE="https://api.github.com"
           WARNINGS_FILE=$(mktemp)
           ERRORS_FILE=$(mktemp)
           TOTAL_REPOS=0
+
+          # ── Parse excluded workflow filenames into an array ──
+          declare -a EXCLUDED_FILES=()
+          if [[ -n "$EXCLUDE_WORKFLOWS" ]]; then
+            IFS=',' read -ra EXCLUDED_FILES <<< "$EXCLUDE_WORKFLOWS"
+            # Trim whitespace from each entry
+            for i in "${!EXCLUDED_FILES[@]}"; do
+              EXCLUDED_FILES[$i]=$(echo "${EXCLUDED_FILES[$i]}" | xargs)
+            done
+            echo "Excluded workflows: ${EXCLUDED_FILES[*]}"
+          fi
+
+          # ── Helper: check if a workflow file is excluded ──
+          is_excluded_workflow() {
+            local file="$1"
+            local basename="${file##*/}"
+            for excluded in "${EXCLUDED_FILES[@]}"; do
+              if [[ "$excluded" == "$basename" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
           TOTAL_FORKS=0
 
           # ── Target parent repos — only forks of these repos are scanned ──
@@ -236,6 +260,12 @@ jobs:
               echo "$wf_json" | jq -r '.workflows[] | "\(.id)|\(.path)|\(.state)|\(.name)"' | \
               while IFS='|' read -r wf_id wf_path wf_state wf_name; do
                 [[ -z "$wf_id" ]] && continue
+
+                # Skip excluded workflow files
+                if is_excluded_workflow "$wf_path"; then
+                  echo "    ⏭️  ${wf_name} (${wf_path##*/}) is in exclude list — skipping"
+                  continue
+                fi
 
                 # Fetch raw workflow YAML content
                 file_content=$(curl -sS -w "\n%{http_code}" \
