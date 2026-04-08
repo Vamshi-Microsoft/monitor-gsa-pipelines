@@ -720,8 +720,8 @@ jobs:
                       </td>
                     </tr>
                     <tr>
-                      <td style="padding:16px 32px 8px;">
-                        <p style="margin:0; font-size:14px; color:#605e5c;">The automated scan found <strong>${totalCount}</strong> active scheduled workflows, please take the necessary actions.</p>
+                      <td style="padding:16px 32px 18px;">
+                        <p style="margin:0; font-size:14px; color:#605e5c;">Hi Team,<br>The automated scan found <strong>${totalCount}</strong> active scheduled workflow(s) across all your forked repositories that require your attention. Please disable unused workflows.</p>
                       </td>
                     </tr>
                     ${userSections}
