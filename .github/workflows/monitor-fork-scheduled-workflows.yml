@@ -303,9 +303,22 @@ jobs:
                     continue
                   fi
 
+                  # Only report workflows that have at least one run.
+                  runs_json=$(api_get "${API_BASE}/repos/${repo_full}/actions/workflows/${wf_id}/runs?per_page=1") || {
+                    echo "    ⚠️  Could not fetch workflow runs for ${wf_name}" | tee -a "$ERRORS_FILE"
+                    continue
+                  }
+                  run_count=$(echo "$runs_json" | jq '.total_count // 0')
+
+                  if [[ "$run_count" -eq 0 ]]; then
+                    echo "    ℹ️  ${wf_name} is scheduled but has no runs yet — skipping"
+                    continue
+                  fi
+
                   echo "    🚨 ACTIVE SCHEDULED WORKFLOW DETECTED"
                   echo "       Name:  ${wf_name}"
                   echo "       File:  ${wf_path}"
+                  echo "       Runs:  ${run_count}"
                   echo "       URL:   https://github.com/${repo_full}/actions/workflows/${wf_path##*/}"
                   echo "       🔗 Disable: https://github.com/${repo_full}/actions/workflows/${wf_path##*/}"
 
